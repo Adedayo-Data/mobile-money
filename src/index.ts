@@ -53,7 +53,15 @@ const limiter = rateLimit({
 app.use(metricsMiddleware);
 app.use(helmet());
 app.use(cors());
-app.use(express.json({ limit: process.env.REQUEST_SIZE_LIMIT || "10mb" }));
+
+// --- Updated: JSON body parser with size limit ---
+app.use(
+  express.json({
+    limit: process.env.REQUEST_SIZE_LIMIT || "10mb", // Default 10mb
+  }),
+);
+
+// --- Optional: urlencoded parser with same limit ---
 app.use(
   express.urlencoded({
     limit: process.env.REQUEST_SIZE_LIMIT || "10mb",
@@ -63,15 +71,10 @@ app.use(
 app.use(limiter);
 app.use(responseTime);
 
-// Prometheus metrics endpoint
-app.get("/metrics", async (req, res) => {
-  try {
-    res.set("Content-Type", register.contentType);
-    res.end(await register.metrics());
-  } catch (err) {
-    res.status(500).end(err);
-  }
-});
+// Health & readiness
+app.get("/health", (req, res) =>
+  res.json({ status: "ok", timestamp: new Date().toISOString() }),
+);
 
 // Basic health check
 app.get("/health", (req, res) => {

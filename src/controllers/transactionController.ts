@@ -34,10 +34,10 @@ export const transactionSchema = z.object({
   provider: z.enum(["mtn", "airtel", "orange"], {
     message: "Provider must be one of: mtn, airtel, orange",
   }),
-  stellarAddress: z.string().regex(/^G[A-Z2-7]{55}$/, {
-    message: "Invalid Stellar address format",
-  }),
-  userId: z.string().min(1, { message: "userId is required" }),
+  stellarAddress: z
+    .string()
+    .regex(/^G[A-Z2-7]{55}$/, { message: "Invalid Stellar address format" }),
+  userId: z.string().nonempty({ message: "userId is required" }),
 });
 
 export const validateTransaction = (
@@ -48,10 +48,9 @@ export const validateTransaction = (
   try {
     transactionSchema.parse(req.body);
     next();
-  } catch (err: unknown) {
-    const zodErr = err as { errors?: Array<{ message: string }> };
+  } catch (err: any) {
     const message =
-      zodErr.errors?.map((e) => e.message).join(", ") || "Invalid input";
+      err.errors?.map((e: any) => e.message).join(", ") || "Invalid input";
     return res.status(400).json({ error: message });
   }
 };
@@ -248,9 +247,11 @@ export const cancelTransactionHandler = async (req: Request, res: Response) => {
       return res.status(404).json({ error: "Transaction not found" });
 
     if (transaction.status !== TransactionStatus.Pending)
-      return res.status(400).json({
-        error: `Cannot cancel transaction with status '${transaction.status}'`,
-      });
+      return res
+        .status(400)
+        .json({
+          error: `Cannot cancel transaction with status '${transaction.status}'`,
+        });
 
     await transactionModel.updateStatus(id, TransactionStatus.Cancelled);
     const updatedTransaction = await transactionModel.findById(id);
@@ -274,7 +275,7 @@ export const cancelTransactionHandler = async (req: Request, res: Response) => {
       }
     }
 
-    const body: CancelTransactionResponse = {
+    res.json({
       message: "Transaction cancelled successfully",
       transaction: updatedTransaction,
     };
