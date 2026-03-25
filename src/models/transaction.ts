@@ -52,7 +52,7 @@ export class TransactionModel {
     return result.rows[0] || null;
   }
 
-  async updateStatus(id: string, status: TransactionStatus): Promise<void> {
+  async updateStatus(id: string, status: TransactionStatus,extra:any = {} ): Promise<void> {
     await pool.query('UPDATE transactions SET status = $1 WHERE id = $2', [status, id]);
   }
 
