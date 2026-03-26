@@ -11,10 +11,8 @@ import {
 import { lockManager, LockKeys } from "../utils/lock";
 import { TransactionLimitService } from "../services/transactionLimit/transactionLimitService";
 import { KYCService } from "../services/kyc/kycService";
-import {
-  MobileMoneyProvider,
-  validateProviderLimits,
-} from "../config/providers";
+import { MobileMoneyProvider, validateProviderLimits } from "../config/providers";
+import type { TransactionJobData } from "../queue/transactionQueue";
 import {
   CancelTransactionResponse,
   LimitExceededErrorResponse,
@@ -481,9 +479,8 @@ export const updateNotesHandler = async (req: Request, res: Response) => {
     }
 
     const transaction = await transactionModel.updateNotes(id, notes);
-    if (!transaction) {
+    if (!transaction)
       return res.status(404).json({ error: "Transaction not found" });
-    }
 
     return res.json(transaction);
   } catch (err) {
@@ -510,7 +507,6 @@ export const updateAdminNotesHandler = async (req: Request, res: Response) => {
     const transaction = await transactionModel.updateAdminNotes(id, adminNotes);
     if (!transaction) {
       return res.status(404).json({ error: "Transaction not found" });
-    }
 
     return res.json(transaction);
   } catch (err) {

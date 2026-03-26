@@ -23,6 +23,7 @@ import { bulkRoutes } from "./routes/bulk";
 import { transactionDisputeRoutes, disputeRoutes } from "./routes/disputes";
 import { statsRoutes } from "./routes/stats";
 import { reportsRoutes } from "./routes/reports";
+import { createKYCRoutes } from "./routes/kycRoutes";
 import { errorHandler } from "./middleware/errorHandler";
 import {
   connectRedis,
@@ -132,7 +133,7 @@ app.use(
   }),
 );
 
-app.get("/health", (_req, res) => {
+app.get("/health", (_req: Request, res: Response) => {
   const body: HealthCheckResponse = {
     status: "ok",
     timestamp: new Date().toISOString(),
@@ -140,7 +141,7 @@ app.get("/health", (_req, res) => {
   res.json(body);
 });
 
-app.get("/ready", async (_req, res) => {
+app.get("/ready", async (_req: Request, res: Response) => {
   const checks: Record<string, string> = { database: "down", redis: "down" };
   let allReady = true;
 
@@ -186,29 +187,29 @@ app.use("/api/v1/transactions/bulk", bulkRoutesV1);
 app.use("/api/v1/disputes", disputeRoutesV1);
 app.use("/api/v1/stats", statsRoutesV1);
 
-app.use(
-  "/api/transactions",
-  (req: VersionedRequest, res, next) => {
-    req.apiVersion = "v1";
-    res.setHeader("API-Version", "v1");
-    res.setHeader("Deprecation", "true");
-    res.setHeader(
-      "Sunset",
-      new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toUTCString(),
-    );
-    res.setHeader(
-      "Url",
-      `https://example.com${req.originalUrl.replace("/api/", "/api/v1/")}`,
-    );
-    next();
-  },
-  transactionRoutes,
-);
+const deprecatedApiV1Handler: express.RequestHandler = (req, res, next) => {
+  const versionedReq = req as VersionedRequest;
+  versionedReq.apiVersion = "v1";
+  res.setHeader("API-Version", "v1");
+  res.setHeader("Deprecation", "true");
+  res.setHeader(
+    "Sunset",
+    new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toUTCString(),
+  );
+  res.setHeader(
+    "Url",
+    `https://example.com${req.originalUrl.replace("/api/", "/api/v1/")}`,
+  );
+  next();
+};
+
+app.use("/api/transactions", deprecatedApiV1Handler, transactionRoutes);
 app.use("/api/transactions", transactionDisputeRoutes);
 app.use("/api/transactions/bulk", bulkRoutes);
 app.use("/api/disputes", disputeRoutes);
 app.use("/api/stats", statsRoutes);
 app.use("/api/reports", reportsRoutes);
+app.use("/api/kyc", createKYCRoutes(pool));
 
 app.use(
   (
