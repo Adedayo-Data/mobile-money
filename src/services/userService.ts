@@ -171,6 +171,44 @@ export async function updateUserRole(
 }
 
 /**
+ * Update user by id
+ */
+export async function updateUserById(
+  userId: string,
+  userUpdate: Partial<User>,
+): Promise<User> {
+  const allowedKeys = ["name", "email", "phone_number"] as const;
+  const keys = Object.keys(userUpdate).filter((k) =>
+    allowedKeys.includes(k as any),
+  ) as (keyof typeof userUpdate)[];
+
+  if (keys.length === 0) {
+    throw new Error("No valid fields to update");
+  }
+
+  const setClause = keys.map((k, i) => `${k} = ($${i + 1})`).join(", ");
+  const values = keys.map((k) => userUpdate[k]);
+
+  const query = `UPDATE users
+                SET ${setClause}, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ($${keys.length + 1})
+                RETURNING *`;
+
+  try {
+    const result = await pool.query(query, [...values, userId]);
+
+    if (!result.rowCount) {
+      throw new Error(`User '${userId}' not found`);
+    }
+
+    return result.rows[0];
+  } catch (err) {
+    console.error("updateUser", err);
+    throw err;
+  }
+}
+
+/**
  * Authenticate user (simplified for demo)
  * In a real app, you would verify phone number via OTP, password, etc.
  */
