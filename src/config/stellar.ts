@@ -69,3 +69,12 @@ export const getNetworkPassphrase = () => {
     STELLAR_NETWORKS.TESTNET) as StellarNetwork;
   return NETWORK_PASSPHRASES[network];
 };
+
+// SEP-24 Configuration
+export const getSep24Config = () => ({
+  webAuthDomain: process.env.STELLAR_WEB_AUTH_DOMAIN || "https://api.mobilemoney.com",
+  interactiveUrlBase: process.env.SEP24_INTERACTIVE_URL || "https://wallet.mobilemoney.com",
+  feeServer: process.env.SEP24_FEE_SERVER,
+  issuerAccount: process.env.STELLAR_ISSUER_ACCOUNT,
+  signingKey: process.env.STELLAR_SIGNING_KEY,
+});

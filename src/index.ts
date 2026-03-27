@@ -44,6 +44,7 @@ import { requestId } from "./middleware/requestId";
 import { metricsMiddleware } from "./middleware/metrics";
 import { validateStellarNetwork, logStellarNetwork } from "./config/stellar";
 import { HealthCheckResponse, ReadinessCheckResponse } from "./types/api";
+import sep24Router from "./stellar/sep24";
 
 dotenv.config();
 
@@ -210,6 +211,9 @@ app.use("/api/disputes", disputeRoutes);
 app.use("/api/stats", statsRoutes);
 app.use("/api/reports", reportsRoutes);
 app.use("/api/kyc", createKYCRoutes(pool));
+
+// SEP-24 Interactive Deposit/Withdrawal Flow
+app.use("/sep24", sep24Router);
 
 app.use(
   (
