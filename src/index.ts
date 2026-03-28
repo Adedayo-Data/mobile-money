@@ -28,6 +28,7 @@ import { reportsRoutes } from "./routes/reports";
 import { createKYCRoutes } from "./routes/kycRoutes";
 import { vaultRoutes } from "./routes/vaults";
 import { adminRoutes } from "./routes/admin";
+import { userRoutes } from "./routes/users";
 import { errorHandler } from "./middleware/errorHandler";
 import {
   connectRedis,
@@ -219,6 +220,7 @@ app.use("/api/disputes", disputeRoutes);
 app.use("/api/stats", statsRoutes);
 app.use("/api/contacts", contactsRoutes);
 app.use("/api/reports", reportsRoutes);
+app.use("/api/users", userRoutes);
 app.use("/api/kyc", createKYCRoutes(pool));
 app.use("/api/admin", requireAuth, adminRoutes);
 app.use("/sep31", sep31Router);
