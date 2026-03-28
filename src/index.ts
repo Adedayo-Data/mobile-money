@@ -1,6 +1,6 @@
 import "./tracer";
 import express, { NextFunction, Request, Response } from "express";
-import { IncomingMessage } from "http";
+import { IncomingMessage, Server } from "http";
 import cors from "cors";
 import helmet from "helmet";
 // replaced express-rate-limit with our redis-backed middleware
@@ -42,6 +42,7 @@ import { authRoutes } from "./routes/auth";
 import { errorHandler } from "./middleware/errorHandler";
 import {
   connectRedis,
+  disconnectRedis,
   redisClient,
   createRedisStore,
   SESSION_TTL_SECONDS,
@@ -73,7 +74,6 @@ import { initSentry, sentryBreadcrumbMiddleware } from "./middleware/sentry";
 
 dotenv.config();
 
-// 2. Initialize Sentry before anything else
 if (process.env.SENTRY_DSN) {
   initSentry(process.env.SENTRY_DSN);
 }
@@ -83,21 +83,26 @@ logStellarNetwork();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const SHUTDOWN_TIMEOUT_MS = parseInt(
+  process.env.SHUTDOWN_TIMEOUT_MS || "30000",
+);
 
-// 3. Sentry v8 Integration (MUST be before any routes)
+let server: Server | null = null;
+let isShuttingDown = false;
+let shutdownInProgress = false;
+let activeRequests = 0;
+
 if (process.env.SENTRY_DSN) {
   Sentry.setupExpressErrorHandler(app);
 }
 
 import rateLimitMiddleware from "./middleware/rateLimit";
 
-// 4. Custom Breadcrumb Enrichment
 app.use(sentryBreadcrumbMiddleware);
 
 app.use(metricsMiddleware);
 app.use(helmet());
 
-// Compression middleware
 if (process.env.COMPRESSION_ENABLED !== "false") {
   app.use(
     compression({
@@ -143,6 +148,32 @@ app.use(rateLimitMiddleware);
 app.use(responseTime);
 app.use(requestId);
 
+app.use((req: Request, res: Response, next: NextFunction) => {
+  if (isShuttingDown) {
+    res.setHeader("Connection", "close");
+    return res.status(503).json({
+      error: "Service Unavailable",
+      message: "Server is shutting down. Please retry shortly.",
+    });
+  }
+
+  activeRequests += 1;
+  let completed = false;
+
+  const onRequestFinished = () => {
+    if (completed) {
+      return;
+    }
+    completed = true;
+    activeRequests = Math.max(0, activeRequests - 1);
+  };
+
+  res.on("finish", onRequestFinished);
+  res.on("close", onRequestFinished);
+
+  next();
+});
+
 const sessionSecret =
   process.env.SESSION_SECRET || "default-secret-change-in-production";
 const redisStore = createRedisStore();
@@ -171,8 +202,16 @@ app.get("/health", (_req: Request, res: Response) => {
 });
 
 app.get("/ready", async (_req: Request, res: Response) => {
-  const checks: Record<string, string> = { database: "down", redis: "down" };
+  const checks: Record<string, string> = {
+    database: "down",
+    redis: "down",
+    shutdown: isShuttingDown ? "in-progress" : "idle",
+  };
   let allReady = true;
+
+  if (isShuttingDown) {
+    allReady = false;
+  }
 
   try {
     await pool.query("SELECT 1");
@@ -273,13 +312,99 @@ app.use(
   },
 );
 
-// 5. Sentry v8 Error Handler (MUST be BEFORE other error middlewares)
 if (process.env.SENTRY_DSN) {
   app.use(Sentry.expressErrorHandler());
 }
 
 app.use(timeoutErrorHandler);
 app.use(errorHandler);
+
+function waitForActiveRequests(timeoutMs: number): Promise<void> {
+  if (activeRequests === 0) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    const startedAt = Date.now();
+    const interval = setInterval(() => {
+      if (activeRequests === 0 || Date.now() - startedAt >= timeoutMs) {
+        clearInterval(interval);
+        resolve();
+      }
+    }, 100);
+  });
+}
+
+async function gracefulShutdown(signal: NodeJS.Signals): Promise<void> {
+  if (shutdownInProgress) {
+    console.log(`[Shutdown] ${signal} received; shutdown already in progress`);
+    return;
+  }
+
+  shutdownInProgress = true;
+  isShuttingDown = true;
+  console.log(`[Shutdown] Received ${signal}. Starting graceful shutdown...`);
+
+  try {
+    if (server) {
+      console.log("[Shutdown] Stopping HTTP server from accepting new requests");
+      await new Promise<void>((resolve, reject) => {
+        server?.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve();
+        });
+      });
+      console.log("[Shutdown] HTTP listener closed");
+    }
+
+    const pendingAtStart = activeRequests;
+    if (pendingAtStart > 0) {
+      console.log(
+        `[Shutdown] Waiting for ${pendingAtStart} active request(s) to finish (timeout ${SHUTDOWN_TIMEOUT_MS}ms)`,
+      );
+    }
+
+    await waitForActiveRequests(SHUTDOWN_TIMEOUT_MS);
+
+    if (activeRequests > 0) {
+      console.warn(
+        `[Shutdown] Timed out waiting for active requests. Remaining: ${activeRequests}`,
+      );
+    } else {
+      console.log("[Shutdown] All active requests finished");
+    }
+
+    console.log("[Shutdown] Draining queue resources");
+    const { shutdownQueue } = await import("./queue");
+    await shutdownQueue();
+    console.log("[Shutdown] Queue resources closed");
+
+    console.log("[Shutdown] Closing PostgreSQL pool");
+    await pool.end();
+    console.log("[Shutdown] PostgreSQL pool closed");
+
+    console.log("[Shutdown] Closing Redis client");
+    await disconnectRedis();
+    console.log("[Shutdown] Redis client closed");
+
+    console.log("[Shutdown] Graceful shutdown complete");
+    process.exit(0);
+  } catch (error) {
+    console.error("[Shutdown] Shutdown sequence failed", error);
+    process.exit(1);
+  }
+}
+
+process.once("SIGTERM", () => {
+  void gracefulShutdown("SIGTERM");
+});
+
+process.once("SIGINT", () => {
+  void gracefulShutdown("SIGINT");
+});
 
 async function initializeRuntime(): Promise<void> {
   if (process.env.NODE_ENV === "test") {
@@ -312,11 +437,14 @@ async function initializeRuntime(): Promise<void> {
       key: fs.readFileSync(path.join(__dirname, "../certs/key.pem")),
       cert: fs.readFileSync(path.join(__dirname, "../certs/cert.pem")),
     };
-    https.createServer(sslOptions, app).listen(PORT, () => {
+
+    const http2Server = spdy.createServer(sslOptions, app);
+    http2Server.listen(PORT, () => {
       console.log(`HTTP/2 server running on https://localhost:${PORT}`);
     });
+    server = http2Server as unknown as Server;
   } else {
-    app.listen(PORT, () =>
+    server = app.listen(PORT, () =>
       console.log(`HTTP/1.1 server running on http://localhost:${PORT}`),
     );
   }
@@ -325,6 +453,5 @@ async function initializeRuntime(): Promise<void> {
 if (process.env.NODE_ENV !== "test") {
   void initializeRuntime();
 }
-
 
 export default app;
